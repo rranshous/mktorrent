@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 """
 we are going to have a python importable command line
 runnable bittorent creating tool.
@@ -8,6 +10,11 @@ Can create a meta file from N files
 
 
 import os.path
+import logging as log
+
+from types import StringType, LongTYpe, IntType, ListType, DictType
+from re import compile
+
 
 # figure out what encoding the system wants
 get_system_encoding = lambda: 'ascii'
@@ -97,7 +104,7 @@ class MetaCreator:
         # make sure our meta info is valid
         try:
             validate_meta_info(info_data)
-        except, ex:
+        except Exception, ex:
             raise
 
         # encode our strings into UTF-8
@@ -184,19 +191,132 @@ class MetaCreator:
         # pick our encoding
         if not encoding:
             encoding = self.encoding or 'ascii'
+        self.encoding = encoding # keep track of what encoding use
 
         if info_data.get('name'):
             u = unicode(info_data.get('name'))
             info_data['name'] = u.encode('UTF-8')
 
+        # shortcut
+        cu = self.convert_unicode
+
         if info_data.get('files'):
             for file_info in info_data.get('files'):
                 if file_info.get('path'):
-                    file_info['path'] = 
+                    file_info['path'] = cu(file_info['path'])
                 if file_info.get('name'):
-                    file_info['name'] = 
+                    file_info['name'] = cu(file_info['name'])
 
         return True
+
+    @classmethod
+    def convert_unicode(cls,encoding):
+        try:
+            s = unicode(s,encoding)
+        except UnicodeError:
+            raise UnicodeError('bad filename: %s' % s)
+        return s
+
+    @classmethod
+    def find_files(cls,path,extension=None,exclude=None):
+        """ returns abs list of paths found recursively 
+            searching from passed path. excluding paths
+            which contain exclude arg and only including
+            paths which meet the extension arg """
+        # absolute paths
+        found = []
+
+        for dir_path, dir_names, file_names in os.walk(path,followlinks=True):
+            # remove paths which include the exclude string
+            # this will keep them from being traversed
+            if exclude:
+                bad_dirs = [x for x in dir_names if exclude in dir_names]
+                map(dir_names.remove,bad_dirs)
+
+            # see if any of the current files meet our
+            # extensio and exclude criteria
+            for name in file_names:
+                if (not extension or x.endswith(extension))
+                   and (not exclude or exclude not in x):
+                    found.append(os.path.join(dir_path,name))
+
+        return [os.path.abspath(path) for path in found]
+
+    @classmethod
+    def validate_info_data(cls,info_data):
+        """ raises exceptions if data is bad """
+        reg = compile(r'^[^/\\.~][^/\\]*$')
+
+        # we must represent the info as a dict
+        if type(info_data) != DictType:
+            raise ValueError('invalid info: data must be a dictionary')
+
+        # make sure our pieces are a string % 20
+        pieces = info_data.get('pieces')
+        if type(pieces) != StringType or len(pieces) % 20 != 0:
+            raise ValueError('invalid info: bad piece key')
+
+        # check our torrent's name
+        name = info_data.get('name')
+        if type(name) != StringType:
+            raise ValueError('invalid info: bad name')
+
+        # check our security regex against the name
+        if not reg.match(name);
+            raise ValueError('invalid info: bad name for security reasons')
+
+        # we can't have both a files list and a length value
+        if 'files' in info_data and 'length' in info_data:
+            raise ValueError('invalid info: single/multiple info')
+
+
+        if 'files' in info_data:
+            files = info_data.get('files')
+
+            # our files must be a list
+            if type(files) != ListType:
+                raise ValueError('invalid info: files must be list')
+
+            # check each of our sub files
+            duplicate_check = {}
+            for file_data in files:
+                # they are represented as dicts
+                if type(file_data) is not DictType:
+                    raise ValueError('invalid info: file data must be dict')
+
+                # they have an int non 0 length
+                length = file_data.get('length')
+                if type(length) not in ints or length < 0:
+                    raise ValueError('invalid info: bad file length')
+
+                # our path must be secure and a list of strings
+                path = file_data.get('path')
+                if type(path) != ListType or path == []:
+                    raise ValueError('invalid info: bad file path')
+                # check our path dirs, secure strings
+                for path_piece in path:
+                    if type(path_piece) != StringType:
+                        raise ValueError('invalid info: bad path dir')
+                    if not reg.match(path_piece):
+                        raise ValueError('invalid info: insecure path dir')
+
+                # make sure we haven't seen this guy before
+                if tuple(path) in duplicate_check:
+                    raise ValueError('invalid info: duplicate path')
+                else:
+                    duplicate_check[tuple(path)] = True
+
+
+        # if we are a single file we will have a length
+        # represented as an int
+        else:
+            length = info.get('length')
+            if type(length) not in ints or length < 0:
+                raise ValueError('invalid info: bad length')
+
+
+        return True
+
 
     def create_info_data(self,files,encoding=None,
                          piece_size=None,validate=True,private=False):
@@ -209,7 +329,7 @@ class MetaCreator:
         # get list of files to index
         file_paths = []
         for path in files:
-            file_paths += find_files(path)
+            file_paths += self.find_files(path)
 
         # get the file sizes
         file_sizes = self.determine_file_sizes(file_paths)
@@ -265,8 +385,9 @@ if __name__ == '__main__':
      created by - default is blank
     """
 
-    parser = OptionParser(usage=usage,
-                          option_class=CleverOption)
+    from cmdline_utils import EnhancedOptionParser
+    usage = "usage: %prog [options] file file2 file3 ..."
+    parser = EnhancedOptionParser(usage=usage)
 
     # verbose
     parser.add_option("-v", "--verbose",
@@ -280,11 +401,11 @@ if __name__ == '__main__':
                       action="store_true",
                       dest="quite",
                       default=True,
-                      help="no output"
+                      help="no output")
 
     # file list
     parser.add_option("-f", "--file","--files",
-                      dest="info",
+                      dest="file_paths",
                       type="abs_path",
                       action="extend",
                       help="list of files or directories")
@@ -296,9 +417,9 @@ if __name__ == '__main__':
                       help="list of trackers")
 
     # announce-list
-    parser.add_option("-al", "--announce-list",
+    parser.add_option("-l", "--announce-list",
                       dest="announce-list",
-                      action="sub_list",
+                      action="sublist",
                       help="prioritized list of trackers by arg #")
 
     # creation date
@@ -313,6 +434,36 @@ if __name__ == '__main__':
                       help="comment")
 
     # created by
-    parser.add_option("-cb","--created-by",
+    parser.add_option("-b","--created-by",
                       dest="created by",
                       help="created by")
+
+    (options, args) = parser.parse_args()
+
+    # figure out our file list
+    # it can be defined in kw args or as loose args
+    file_list = options.get('file_list',[]) + args
+
+    # lets make some meta data !
+    meta_creator = MetaCreator()
+    info_data = meta_creator.create_info_data(file_list)
+
+    # the info is the only non-optional data
+    meta_data = {
+        'info': info_data
+    }
+
+    # now optional info
+    optional_options = ['announce','announce_list','creation date',
+                        'comment','created by']
+
+    # if they defined it, it should be in the neccisary format
+    for attr in optional_options:
+        if attr in options:
+            meta_data[attr] = options.get(attr)
+
+    # now figure out our encoding
+    if meta_creator.encoding:
+        meta_data['encoding'] = meta_creator.encoding
+
+    log.debug('meta_data: %s',meta_data)
