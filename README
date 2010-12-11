@@ -1,0 +1,1 @@
+using brian cohens code as a guide writing a lib / script for making torrent meta files. goals being pure python code and the least amount of data reading from the drive as possible.
