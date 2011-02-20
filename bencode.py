@@ -264,6 +264,9 @@ def encode_dict(x,r):
     ilist = x.items()
     ilist.sort()
     for k,v in ilist:
+        # don't just fail if there are None's
+        if None in (k,v):
+            continue
         r.extend((str(len(k)),':',k))
         encode_func[type(v)](v, r)
     r.append('e')
@@ -286,7 +289,8 @@ def bencode(x):
     try:
         encode_func[type(x)](x, r)
     except:
-        print "*** error *** could not encode type %s (value: %s)" % (type(x), x)
+        raise
+        print "*** error *** could not encode type %s (value: %s)" % (type(x), len(x))
         assert 0
     return ''.join(r)
 
