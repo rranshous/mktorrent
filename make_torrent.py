@@ -13,12 +13,16 @@ import os.path
 import logging as log
 
 from types import StringType, LongType, IntType, ListType, DictType
+ints = (LongType, IntType)
+
 from re import compile
 from sha import sha
+from hashlib import md5
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
+
 
 # figure out what encoding the system wants
 get_system_encoding = lambda: 'ascii'
@@ -39,6 +43,23 @@ class MetaCreator:
 
         # should we include the files md5s?
         self.create_md5 = create_md5
+
+    def md5sum(self,path):
+        log.debug('creating md5: %s',path)
+        # create the md5 for the given file
+        if not os.path.exists(path):
+            raise Exception('File not found')
+
+        file_sum = md5()
+        with file(path,'rb') as fh:
+            while True:
+                chunk = fh.read(128)
+                if not chunk:
+                    break
+                file_sum.update(chunk)
+
+        digest = file_sum.digest()
+        return digest
 
     def determine_piece_size(self, total_size):
         exponent = 15 # < 4mb, 32k pieces
@@ -173,13 +194,19 @@ class MetaCreator:
 
         return ''.join(pieces)
 
-    def get_file_name(self,path):
-        """ guesses from the path what the name should be """
-        pieces = os.path.basename(path.strip()).split('.')
+    def get_file_name(self,path,base=''):
+        """ guesses from the path what the name should be,
+            expects paths to be relative or base to be
+            provided """
+        if path.startswith(base):
+            path = path[len(base):]
+        pieces = [x for x in path.split(os.sep) if x.strip()]
         if len(pieces) == 1:
             name = pieces[0]
         else:
-            name = '.'.join(pieces[:-1])
+            # we should receive a bas if these paths
+            # are not relative
+            name = pieces
         log.debug('get_name: %s %s',path,name)
         return name
 
@@ -195,10 +222,13 @@ class MetaCreator:
         else:
             # see if they share a common prefix
             prefix = os.path.commonprefix(paths)
+            if prefix.endswith(os.sep):
+                prefix = prefix[:-1]
 
             # if they do than lets go ahead and make the base of that the name
             if prefix:
                 name = os.path.basename(prefix)
+                log.debug('name: %s',name)
 
             # if they don't than we are going to return None
             else:
@@ -220,7 +250,7 @@ class MetaCreator:
         for path in file_paths:
             file_info = {
                 'length': file_sizes.get(path),
-                'name': self.get_file_name(path)
+                'path': self.get_file_name(path)
             }
             if create_md5:
                 file_info['md5sum'] = self.md5sum(path)
@@ -299,7 +329,7 @@ class MetaCreator:
         name = info_data.get('name')
         log.debug('validating name: %s',name)
         if type(name) != StringType:
-            raise ValueError('invalid info: bad name')
+            raise ValueError('invalid info: bad name :: %s' % name)
 
         # check our security regex against the name
         if not reg.match(name):
@@ -332,7 +362,7 @@ class MetaCreator:
                 # our path must be secure and a list of strings
                 path = file_data.get('path')
                 if type(path) != ListType or path == []:
-                    raise ValueError('invalid info: bad file path')
+                    raise ValueError('invalid info: bad file path :: %s' % path)
                 # check our path dirs, secure strings
                 for path_piece in path:
                     if type(path_piece) != StringType:
@@ -350,7 +380,7 @@ class MetaCreator:
         # if we are a single file we will have a length
         # represented as an int
         else:
-            length = info.get('length')
+            length = info_data.get('length')
             if type(length) not in ints or length < 0:
                 raise ValueError('invalid info: bad length')
 
@@ -395,12 +425,31 @@ class MetaCreator:
         # than use the dir name as the torrent name
         if len(files) == 1 and os.path.isdir(files[0]):
             name = os.path.basename(files[0])
+            # if for some reason we did not get an abs path
+            # than use what we have
+            name = files[0].replace(os.sep,'')
             log.debug('name: %s',name)
         else:
             name = None
 
+        # from here on out we are working w/ relative paths
+        # and it's not rel to our path but the torrents data path
+
+        # if we were passed only one dir than it is the root for all
+        # the files and it becomes our relative root
+        if len(files) == 1 and os.path.isdir(files[0]):
+            rel_file_paths = self._relativize_paths(files[0],file_paths)
+
+        # if we have multiple file paths to work with and they may
+        # be from all over the place we need to find their common prefix
+        else:
+            common = os.path.commonprefix(file_paths)
+            rel_file_paths = self._relativize_paths(common,file_paths)
+
+        log.debug('rel file paths: %s',rel_file_paths)
+
         # create our info dict
-        info_data = self.create_info_dict(file_paths,
+        info_data = self.create_info_dict(rel_file_paths,
                                           piece_hashes,
                                           file_sizes,
                                           piece_size,
@@ -416,6 +465,12 @@ class MetaCreator:
             raise
 
         return info_data
+
+    def _relativize_paths(self,prefix,paths):
+        common = os.path.commonprefix(paths)
+        l = len(common)
+        rel_file_paths = [p[l] for p in paths]
+        return rel_file_paths
 
 
 if __name__ == '__main__':
