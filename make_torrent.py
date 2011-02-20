@@ -16,6 +16,10 @@ from types import StringType, LongType, IntType, ListType, DictType
 from re import compile
 from sha import sha
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger(__name__)
+
 # figure out what encoding the system wants
 get_system_encoding = lambda: 'ascii'
 try:
@@ -62,7 +66,7 @@ class MetaCreator:
 
     def create_info_dict(self,file_paths,pieces=None,file_sizes=None,
                          piece_size=None,total_size=None,
-                         private=False,create_md5=False):
+                         private=False,create_md5=False,file_name=None):
         """ creates a dict of the 'info' part of the meta data """
         # fill out our data
         if not file_sizes:
@@ -84,7 +88,7 @@ class MetaCreator:
             info_data['name'] = file_name
 
         # length only appropriate if there is a single file
-        if len(file_paths) > 1:
+        if len(file_paths) == 1:
             info_data['length'] = total_size
 
             # if they want us to create the optional md5
@@ -92,15 +96,25 @@ class MetaCreator:
             if create_md5:
                 info_data['md5sum'] = self.md5sum(file_paths[0])
 
+            if not info_data.get('name'):
+                # we'll go ahead and put a name
+                info_data['name'] = self.get_file_name(file_paths[0])
+
         # if it's multiple files we give it each one individually
         else:
             info_data['files'] = self.create_files_info(file_paths,
                                                         file_sizes,
                                                         create_md5)
 
+            if not info_data.get('name'):
+                # guess a name
+                name = self.get_common_name(file_paths)
+                if name:
+                    info_data['name'] = name
+
         # make sure our meta info is valid
         try:
-            validate_meta_info(info_data)
+            self.validate_info_data(info_data)
         except Exception, ex:
             raise
 
@@ -135,10 +149,10 @@ class MetaCreator:
             # open the file
             with file(path,'rb') as fh:
                 # loop through the files data
-                while file_pos < size:
+                while file_pos < file_size:
                     # b/c we might hit the end of the file or the end of a piece
                     # we don't just want to read a while piece
-                    read_len = min(file_size-file_pos,piece_length-piece_position)
+                    read_len = min(file_size-file_pos,piece_size-piece_pos)
                     data = fh.read(read_len)
                     sh.update(data)
 
@@ -148,7 +162,7 @@ class MetaCreator:
                     piece_pos += read_len
 
                     # if we hit the end of a piece hash our data collected
-                    if piece_pos == piece_len:
+                    if piece_pos == piece_size:
                         pieces.append(sh.digest())
                         piece_pos = 0L
 
@@ -158,6 +172,40 @@ class MetaCreator:
             pieces.append(sh.digest())
 
         return ''.join(pieces)
+
+    def get_file_name(self,path):
+        """ guesses from the path what the name should be """
+        pieces = os.path.basename(path.strip()).split('.')
+        if len(pieces) == 1:
+            name = pieces[0]
+        else:
+            name = '.'.join(pieces[:-1])
+        log.debug('get_name: %s %s',path,name)
+        return name
+
+    def get_common_name(self,paths):
+        """ returns the basename of the common prefix
+            if there are more than one paths. """
+
+        if len(paths) == 1:
+            # we shouldn't find ourself in this case,
+            # but we'll go ahead and do the deed anyway
+            name = self.get_file_name(paths[0])
+
+        else:
+            # see if they share a common prefix
+            prefix = os.path.commonprefix(paths)
+
+            # if they do than lets go ahead and make the base of that the name
+            if prefix:
+                name = os.path.basename(prefix)
+
+            # if they don't than we are going to return None
+            else:
+                name = None
+
+        log.debug('get_common_name: %s %s' % (paths,name))
+        return name
 
     def create_files_info(self,file_paths,file_sizes=None,create_md5=False):
         """ create dict of file info for the info section of meta data.
@@ -172,7 +220,7 @@ class MetaCreator:
         for path in file_paths:
             file_info = {
                 'length': file_sizes.get(path),
-                'name': self.get_name(path)
+                'name': self.get_file_name(path)
             }
             if create_md5:
                 file_info['md5sum'] = self.md5sum(path)
@@ -249,6 +297,7 @@ class MetaCreator:
 
         # check our torrent's name
         name = info_data.get('name')
+        log.debug('validating name: %s',name)
         if type(name) != StringType:
             raise ValueError('invalid info: bad name')
 
@@ -322,6 +371,10 @@ class MetaCreator:
         for path in files:
             file_paths += self.find_files(path)
 
+        # make sure there are any files to be had
+        if not file_paths:
+            raise Exception('No Files Found!')
+
         # get the file sizes
         file_sizes = self.determine_file_sizes(file_paths)
 
@@ -338,13 +391,22 @@ class MetaCreator:
         # lets get our hash
         piece_hashes = self.hash_pieces(file_paths,file_sizes,piece_size)
 
+        # if they gave us a single path and it was a dir
+        # than use the dir name as the torrent name
+        if len(files) == 1 and os.path.isdir(files[0]):
+            name = os.path.basename(files[0])
+            log.debug('name: %s',name)
+        else:
+            name = None
+
         # create our info dict
         info_data = self.create_info_dict(file_paths,
                                           piece_hashes,
                                           file_sizes,
                                           piece_size,
                                           total_size,
-                                          private)
+                                          private,
+                                          name)
 
 
         # success ?
@@ -397,7 +459,7 @@ if __name__ == '__main__':
     # file list
     parser.add_option("-f", "--file","--files",
                       dest="file_paths",
-                      type="abs_path",
+                      type="abspath",
                       action="extend",
                       help="list of files or directories")
 
@@ -431,9 +493,13 @@ if __name__ == '__main__':
 
     (options, args) = parser.parse_args()
 
+    log.debug('options: %s',options)
+    log.debug('args: %s',args)
+
     # figure out our file list
     # it can be defined in kw args or as loose args
-    file_list = options.get('file_list',[]) + args
+    file_list = options.get('file_paths',[]) + args
+    log.debug('file_list: %s' % file_list)
 
     # lets make some meta data !
     meta_creator = MetaCreator()
