@@ -12,9 +12,9 @@ Can create a meta file from N files
 import os.path
 import logging as log
 
-from types import StringType, LongTYpe, IntType, ListType, DictType
+from types import StringType, LongType, IntType, ListType, DictType
 from re import compile
-
+from sha import sha
 
 # figure out what encoding the system wants
 get_system_encoding = lambda: 'ascii'
@@ -36,8 +36,7 @@ class MetaCreator:
         # should we include the files md5s?
         self.create_md5 = create_md5
 
-    @classmethod
-    def determine_piece_size(cls, total_size):
+    def determine_piece_size(self, total_size):
         exponent = 15 # < 4mb, 32k pieces
         if total_size   > 8L*1024*1024*1024: # > 8gb, 2mb pieces
             exponent = 21
@@ -53,8 +52,7 @@ class MetaCreator:
             exponent = 16
         return 2 ** exponent
 
-    @classmethod
-    def determine_file_sizes(cls, file_paths):
+    def determine_file_sizes(self, file_paths):
         """ recursively walks through files / dirs return lookup of sizes """
         to_return = {}
         for path in file_paths:
@@ -62,8 +60,7 @@ class MetaCreator:
 
         return to_return
 
-    @classmethod
-    def create_info_dict(cls,file_paths,pieces=None,file_sizes=None,
+    def create_info_dict(self,file_paths,pieces=None,file_sizes=None,
                          piece_size=None,total_size=None,
                          private=False,create_md5=False):
         """ creates a dict of the 'info' part of the meta data """
@@ -112,8 +109,7 @@ class MetaCreator:
 
         return info_data
 
-    @classmethod
-    def hash_pieces(cls,file_paths,file_sizes=None,piece_size=None):
+    def hash_pieces(self,file_paths,file_sizes=None,piece_size=None):
         """ returns back a string hash of the pieces """
         # fill in our data
         if not file_sizes:
@@ -163,8 +159,7 @@ class MetaCreator:
 
         return ''.join(pieces)
 
-    @classmethod
-    def create_files_info(cls,file_paths,file_sizes=None,create_md5=False):
+    def create_files_info(self,file_paths,file_sizes=None,create_md5=False):
         """ create dict of file info for the info section of meta data.
             file_paths can also be a dict who's key is the file path
             and the value is the file size """
@@ -185,8 +180,7 @@ class MetaCreator:
 
         return files_info
 
-    @classmethod
-    def encode_meta_info_strings(cls,info_data,encoding=None):
+    def encode_meta_info_strings(self,info_data,encoding=None):
         """ encodes file/path names (UTF-8) """
         # pick our encoding
         if not encoding:
@@ -209,16 +203,14 @@ class MetaCreator:
 
         return True
 
-    @classmethod
-    def convert_unicode(cls,encoding):
+    def convert_unicode(self,encoding):
         try:
             s = unicode(s,encoding)
         except UnicodeError:
             raise UnicodeError('bad filename: %s' % s)
         return s
 
-    @classmethod
-    def find_files(cls,path,extension=None,exclude=None):
+    def find_files(self,path,extension=None,exclude=None):
         """ returns abs list of paths found recursively 
             searching from passed path. excluding paths
             which contain exclude arg and only including
@@ -236,14 +228,13 @@ class MetaCreator:
             # see if any of the current files meet our
             # extensio and exclude criteria
             for name in file_names:
-                if (not extension or x.endswith(extension))
+                if (not extension or x.endswith(extension)) \
                    and (not exclude or exclude not in x):
                     found.append(os.path.join(dir_path,name))
 
         return [os.path.abspath(path) for path in found]
 
-    @classmethod
-    def validate_info_data(cls,info_data):
+    def validate_info_data(self,info_data):
         """ raises exceptions if data is bad """
         reg = compile(r'^[^/\\.~][^/\\]*$')
 
@@ -262,7 +253,7 @@ class MetaCreator:
             raise ValueError('invalid info: bad name')
 
         # check our security regex against the name
-        if not reg.match(name);
+        if not reg.match(name):
             raise ValueError('invalid info: bad name for security reasons')
 
         # we can't have both a files list and a length value
@@ -349,7 +340,7 @@ class MetaCreator:
 
         # create our info dict
         info_data = self.create_info_dict(file_paths,
-                                          pieces,
+                                          piece_hashes,
                                           file_sizes,
                                           piece_size,
                                           total_size,
